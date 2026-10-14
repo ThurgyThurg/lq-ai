@@ -87,38 +87,26 @@ class Settings(BaseSettings):
 
     # ----- Document pipeline (Task C5) -----
     # Concurrency: how many ingest jobs the arq worker runs in parallel.
-    # 2 is the conservative default for M1 — both Docling and PyMuPDF are
-    # CPU-bound and we don't want to starve the host. Operators with
-    # multi-core dedicated hosts should bump this.
+    # 2 is the conservative default for M1 — PyMuPDF is CPU-bound and we
+    # don't want to starve the host. Operators with multi-core dedicated
+    # hosts should bump this.
     lq_ai_ingest_worker_concurrency: int = Field(
         default=2,
         description=(
             "Concurrency of the document-pipeline arq worker. Each job runs "
-            "Docling + PyMuPDF (CPU-bound); 2 is conservative."
+            "PyMuPDF (CPU-bound); 2 is conservative."
         ),
     )
 
-    # Docling can take a while on multi-page PDFs (legal contracts run
-    # 20-100 pages routinely). 5 minutes per file is a generous default;
-    # operators with structurally larger documents should raise.
-    lq_ai_docling_timeout_seconds: int = Field(
+    # Per-job wall-clock cap for the full ingest pipeline (PyMuPDF +
+    # chunking + persistence). Legal contracts run 20–100 pages routinely;
+    # 300 s is the preserved operator default. Operators with very large
+    # documents may raise this.
+    lq_ai_ingest_timeout_seconds: int = Field(
         default=300,
         description=(
-            "Per-job timeout for the document pipeline (Docling + PyMuPDF + "
+            "Per-job timeout for the document pipeline (PyMuPDF + "
             "chunking + persistence). Default 300 seconds."
-        ),
-    )
-
-    # When False, skip the Docling pass entirely and run PyMuPDF only.
-    # Useful for environments where Docling can't be installed (e.g.
-    # constrained Python builds or CI runners without HuggingFace
-    # network access).
-    lq_ai_docling_enabled: bool = Field(
-        default=True,
-        description=(
-            "When True (default), run Docling for structured-content "
-            "extraction. When False, skip Docling and use PyMuPDF only "
-            "for offsets and content."
         ),
     )
 

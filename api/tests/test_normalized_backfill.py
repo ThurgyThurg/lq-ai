@@ -219,14 +219,8 @@ async def test_backfill_populates_pre_m2_rows(
     db_user: User,
     fake_s3: FakeS3Client,
     patched_storage: FakeS3Client,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A document with empty normalized_content gets reconstructed from chunks."""
-
-    from app.config import get_settings
-
-    settings = get_settings()
-    monkeypatch.setattr(settings, "lq_ai_docling_enabled", False)
 
     doc_id = await _ingest_then_clear_normalized(db_session, db_user, fake_s3, _make_simple_pdf())
 
@@ -265,14 +259,8 @@ async def test_backfill_is_idempotent(
     db_user: User,
     fake_s3: FakeS3Client,
     patched_storage: FakeS3Client,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Re-running on already-populated rows is a no-op (skip semantics)."""
-
-    from app.config import get_settings
-
-    settings = get_settings()
-    monkeypatch.setattr(settings, "lq_ai_docling_enabled", False)
 
     await _ingest_then_clear_normalized(db_session, db_user, fake_s3, _make_simple_pdf())
 
@@ -290,14 +278,8 @@ async def test_backfill_force_rewrites_populated_rows(
     db_user: User,
     fake_s3: FakeS3Client,
     patched_storage: FakeS3Client,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``force=True`` re-processes rows whose normalized_content is non-empty."""
-
-    from app.config import get_settings
-
-    settings = get_settings()
-    monkeypatch.setattr(settings, "lq_ai_docling_enabled", False)
 
     doc_id = await _ingest_then_clear_normalized(db_session, db_user, fake_s3, _make_simple_pdf())
 

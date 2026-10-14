@@ -5,9 +5,8 @@ This module is the entry point invoked by the ``arq`` worker. Given a
 
 1. Loads the file row (refusing to ingest soft-deleted rows).
 2. Pulls the bytes from object storage via :func:`app.storage.stream_download`.
-3. Runs :func:`app.pipeline.parsers.parse_pdf` (PyMuPDF mandatory,
-   Docling best-effort) on the byte stream — wrapped in
-   :func:`asyncio.to_thread` because the parsers are sync.
+3. Runs :func:`app.pipeline.parsers.parse_pdf` (PyMuPDF) on the byte
+   stream — wrapped in :func:`asyncio.to_thread` because the parser is sync.
 4. Runs :func:`app.pipeline.chunker.chunk_document` to produce
    character-precise chunks.
 5. Persists a :class:`Document` row and the :class:`DocumentChunk`
@@ -203,30 +202,21 @@ async def ingest_file(
         )
         raise
 
-    # ---- Run parsers in a thread (sync libraries), bounded by an in-job
-    # soft timeout. A slow first-run docling model download (~hundreds of MB
-    # on first use) can otherwise blow past arq's hard ``job_timeout``, which
-    # kills the worker mid-parse and leaves the row stuck in ``processing``
-    # with an empty ``ingestion_error`` — a UI polling for ``ready`` then
-    # spins forever (DE-351). The arq job_timeout is set strictly higher
-    # (see ``WorkerSettings`` in ``app.workers.document_pipeline``) so this
-    # soft path wins the race and can persist a terminal ``failed`` row.
-    # The orphaned worker thread finishes its download in the background, so
-    # a retry once the models are cached succeeds.
+    # ---- Run parsers in a thread (sync library), bounded by a soft timeout.
+    # The arq job_timeout is set strictly higher (see ``WorkerSettings`` in
+    # ``app.workers.document_pipeline``) so this soft path wins the race and
+    # can persist a terminal ``failed`` row rather than leaving the row stuck
+    # in ``processing``.
     try:
         if route_text:
-            # Plain text / Markdown needs no parsing library and no network:
-            # the decoded bytes are the canonical stream. Pure and fast, so
-            # it skips the Docling thread/timeout machinery entirely.
             parsed = parse_text(raw_bytes)
         else:
             parsed = await asyncio.wait_for(
                 asyncio.to_thread(
                     parse_pdf,
                     raw_bytes,
-                    run_docling=settings.lq_ai_docling_enabled,
                 ),
-                timeout=settings.lq_ai_docling_timeout_seconds,
+                timeout=settings.lq_ai_ingest_timeout_seconds,
             )
     except TimeoutError:
         await _mark_failed(
@@ -234,9 +224,7 @@ async def ingest_file(
             row,
             error="ingestion_timeout",
             reason=(
-                f"parse exceeded {settings.lq_ai_docling_timeout_seconds}s "
-                "(a first-run docling model download can exceed the budget; "
-                "retry once models are cached — DE-351)"
+                f"parse exceeded {settings.lq_ai_ingest_timeout_seconds}s"
             ),
         )
         return IngestResult(

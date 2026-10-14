@@ -312,3 +312,14 @@ Considered for "fail loud, fix bugs." Rejected because Docling is a
 young library and our pipeline must be robust to its flakiness. We
 log Docling failures at WARNING and proceed via PyMuPDF; the operator
 sees the warning and can decide whether to file a Docling issue.
+
+---
+
+## Revisions
+
+**Revised by ADR 0026 (2026-08-23):** The Docling fallback became the only
+code path but never produced output (every invocation raised against the 1.x
+API while the pin was `>=1.16,<2`). ADR 0026 removes the integration entirely.
+The "PyMuPDF canonical + Docling structured" cascade described here is now
+PyMuPDF-only for PDF. A structured sidecar returns only via DOCX/Pandoc or a
+future DE-387 adapter.

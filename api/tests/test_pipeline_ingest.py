@@ -4,8 +4,7 @@ The orchestration sits between three things:
 
 1. The DB (real per-test session via the conftest fixture).
 2. MinIO (mocked via the FakeS3Client from test_storage_streaming).
-3. The parsers (real PyMuPDF on real fixture PDFs; Docling disabled
-   in tests to avoid the heavy install footprint).
+3. The parsers (real PyMuPDF on real fixture PDFs).
 
 What the tests check:
 
@@ -160,15 +159,8 @@ async def test_ingest_happy_path_marks_ready_with_chunks(
     db_user: User,
     fake_s3: FakeS3Client,
     patched_storage: FakeS3Client,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """End-to-end: pending → ready, chunks persisted, offsets byte-precise."""
-
-    # Ensure docling is disabled in tests to keep them fast and offline.
-    from app.config import get_settings
-
-    settings = get_settings()
-    monkeypatch.setattr(settings, "lq_ai_docling_enabled", False)
 
     pdf_bytes = _make_simple_pdf()
     storage_key = f"{uuid.uuid4()}"
@@ -215,7 +207,7 @@ async def test_ingest_happy_path_marks_ready_with_chunks(
     # Re-derive canonical text from PyMuPDF for the slice check.
     from app.pipeline.parsers import parse_pdf
 
-    parsed = parse_pdf(pdf_bytes, run_docling=False)
+    parsed = parse_pdf(pdf_bytes)
 
     for chunk in chunks:
         slice_ = parsed.canonical_text[chunk.char_offset_start : chunk.char_offset_end]
@@ -385,14 +377,8 @@ async def test_ingest_multipage_records_per_chunk_pages(
     db_user: User,
     fake_s3: FakeS3Client,
     patched_storage: FakeS3Client,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Multi-page PDF: chunks record their page numbers."""
-
-    from app.config import get_settings
-
-    settings = get_settings()
-    monkeypatch.setattr(settings, "lq_ai_docling_enabled", False)
 
     pdf_bytes = _make_multipage_pdf()
     storage_key = f"{uuid.uuid4()}"
@@ -434,14 +420,8 @@ async def test_ingest_re_run_does_not_duplicate_chunks(
     db_user: User,
     fake_s3: FakeS3Client,
     patched_storage: FakeS3Client,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Running ingest twice produces the same chunk count, not double."""
-
-    from app.config import get_settings
-
-    settings = get_settings()
-    monkeypatch.setattr(settings, "lq_ai_docling_enabled", False)
 
     pdf_bytes = _make_simple_pdf()
     storage_key = f"{uuid.uuid4()}"
@@ -524,14 +504,8 @@ async def test_ingest_corrupt_pdf_marks_failed(
     db_user: User,
     fake_s3: FakeS3Client,
     patched_storage: FakeS3Client,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A corrupt PDF flips the row to failed with parse_failed."""
-
-    from app.config import get_settings
-
-    settings = get_settings()
-    monkeypatch.setattr(settings, "lq_ai_docling_enabled", False)
 
     storage_key = f"{uuid.uuid4()}"
     _put_in_fake_s3(fake_s3, storage_key, b"NOT A PDF")
@@ -559,7 +533,7 @@ async def test_ingest_parse_timeout_marks_failed(
     patched_storage: FakeS3Client,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A parse that exceeds the docling soft timeout flips the row to
+    """A parse that exceeds the soft timeout flips the row to
     ``failed`` with ``ingestion_timeout`` — never left stuck in
     ``processing`` (DE-351 regression)."""
 
@@ -569,11 +543,10 @@ async def test_ingest_parse_timeout_marks_failed(
 
     settings = get_settings()
     # Tiny soft timeout so the test is fast; the fake parser blocks past it.
-    monkeypatch.setattr(settings, "lq_ai_docling_timeout_seconds", 1)
+    monkeypatch.setattr(settings, "lq_ai_ingest_timeout_seconds", 1)
 
     def _slow_parse(*args: object, **kwargs: object) -> object:
-        # Blocks the worker thread well past the 1s soft timeout, standing
-        # in for a slow first-run docling model download.
+        # Blocks the worker thread well past the 1s soft timeout.
         time.sleep(3)
         return None
 
@@ -651,7 +624,6 @@ async def test_ingest_populates_normalized_content_and_was_ocrd(
     db_user: User,
     fake_s3: FakeS3Client,
     patched_storage: FakeS3Client,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """M2-A1: ingest writes the canonical text to ``normalized_content``
     and sets ``was_ocrd=False`` (M1 has no OCR path).
@@ -661,11 +633,6 @@ async def test_ingest_populates_normalized_content_and_was_ocrd(
     that ``normalized_content[start:end] == chunk.content`` for every
     chunk in the document.
     """
-
-    from app.config import get_settings
-
-    settings = get_settings()
-    monkeypatch.setattr(settings, "lq_ai_docling_enabled", False)
 
     pdf_bytes = _make_simple_pdf()
     storage_key = f"{uuid.uuid4()}"
@@ -685,7 +652,7 @@ async def test_ingest_populates_normalized_content_and_was_ocrd(
     # New columns are populated and have the expected M1 values.
     from app.pipeline.parsers import parse_pdf
 
-    parsed = parse_pdf(pdf_bytes, run_docling=False)
+    parsed = parse_pdf(pdf_bytes)
     assert doc.normalized_content == parsed.canonical_text
     assert doc.was_ocrd is False
 
@@ -717,14 +684,8 @@ async def test_ingest_re_run_refreshes_normalized_content(
     db_user: User,
     fake_s3: FakeS3Client,
     patched_storage: FakeS3Client,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """M2-A1: idempotent re-ingest keeps normalized_content in sync with chunks."""
-
-    from app.config import get_settings
-
-    settings = get_settings()
-    monkeypatch.setattr(settings, "lq_ai_docling_enabled", False)
 
     pdf_bytes = _make_simple_pdf()
     storage_key = f"{uuid.uuid4()}"
@@ -746,6 +707,6 @@ async def test_ingest_re_run_refreshes_normalized_content(
 
     from app.pipeline.parsers import parse_pdf
 
-    parsed = parse_pdf(pdf_bytes, run_docling=False)
+    parsed = parse_pdf(pdf_bytes)
     assert doc.normalized_content == parsed.canonical_text
     assert doc.was_ocrd is False

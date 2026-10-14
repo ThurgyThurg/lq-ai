@@ -18,7 +18,6 @@ canonical text from PyMuPDF.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import NoReturn
 
 import pytest
 
@@ -142,7 +141,7 @@ def test_is_pdf_mime_accepts_canonical_and_variants() -> None:
 @pytest.mark.unit
 def test_parse_pdf_simple_returns_canonical_text() -> None:
     pdf = _make_simple_pdf()
-    parsed = parse_pdf(pdf, run_docling=False)
+    parsed = parse_pdf(pdf)
 
     assert parsed.canonical_text  # non-empty
     assert parsed.page_count == 1
@@ -157,7 +156,7 @@ def test_parse_pdf_simple_returns_canonical_text() -> None:
 @pytest.mark.unit
 def test_parse_pdf_multipage_tracks_page_spans() -> None:
     pdf = _make_multipage_pdf()
-    parsed = parse_pdf(pdf, run_docling=False)
+    parsed = parse_pdf(pdf)
 
     assert parsed.page_count == 3
     assert len(parsed.pages) == 3
@@ -176,7 +175,7 @@ def test_parse_pdf_canonical_slices_per_page_match() -> None:
     """Slicing canonical_text by each page span yields the page's text."""
 
     pdf = _make_multipage_pdf()
-    parsed = parse_pdf(pdf, run_docling=False)
+    parsed = parse_pdf(pdf)
 
     for span in parsed.pages:
         page_slice = parsed.canonical_text[span.char_start : span.char_end]
@@ -192,13 +191,13 @@ def test_parse_pdf_canonical_slices_per_page_match() -> None:
 @pytest.mark.unit
 def test_parse_pdf_empty_input_raises() -> None:
     with pytest.raises(ParserError):
-        parse_pdf(b"", run_docling=False)
+        parse_pdf(b"")
 
 
 @pytest.mark.unit
 def test_parse_pdf_corrupt_input_raises() -> None:
     with pytest.raises(ParserError):
-        parse_pdf(b"not a pdf at all", run_docling=False)
+        parse_pdf(b"not a pdf at all")
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +224,7 @@ def test_offset_fidelity_against_fixture_pdfs(
     """
 
     pdf_bytes = fixture_builder()
-    parsed = parse_pdf(pdf_bytes, run_docling=False)
+    parsed = parse_pdf(pdf_bytes)
     chunks = chunk_document(parsed, target_chars=200, overlap_chars=20)
 
     assert chunks, f"[{label}] chunker produced no chunks"
@@ -244,44 +243,12 @@ def test_offset_fidelity_with_default_chunk_size() -> None:
     """Even at the production default chunk size, fidelity holds."""
 
     pdf_bytes = _make_multipage_pdf()
-    parsed = parse_pdf(pdf_bytes, run_docling=False)
+    parsed = parse_pdf(pdf_bytes)
     chunks = chunk_document(parsed)  # uses defaults
 
     for chunk in chunks:
         canonical_slice = parsed.canonical_text[chunk.char_offset_start : chunk.char_offset_end]
         assert canonical_slice == chunk.content
-
-
-# ---------------------------------------------------------------------------
-# Docling fall-through behaviour (Docling not strictly required).
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-def test_parse_pdf_docling_disabled_marks_pymupdf_only() -> None:
-    """When run_docling=False, parser is `pymupdf-only`."""
-
-    pdf = _make_simple_pdf()
-    parsed = parse_pdf(pdf, run_docling=False)
-    assert parsed.parser == "pymupdf-only"
-    assert parsed.structured_content is None
-
-
-@pytest.mark.unit
-def test_parse_pdf_docling_failure_falls_through(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When Docling raises, the parser falls through to PyMuPDF-only."""
-
-    from app.pipeline import parsers
-
-    def _raise(*args: object, **kwargs: object) -> NoReturn:
-        raise RuntimeError("simulated Docling crash")
-
-    monkeypatch.setattr(parsers, "_run_docling", _raise)
-
-    pdf = _make_simple_pdf()
-    parsed = parse_pdf(pdf, run_docling=True)
-    assert parsed.parser == "pymupdf"
-    assert parsed.structured_content is None
 
 
 # ---------------------------------------------------------------------------
@@ -304,4 +271,4 @@ def test_parse_pdf_encrypted_raises_unsupported() -> None:
     doc.close()
 
     with pytest.raises(ParserUnsupported):
-        parse_pdf(encrypted, run_docling=False)
+        parse_pdf(encrypted)

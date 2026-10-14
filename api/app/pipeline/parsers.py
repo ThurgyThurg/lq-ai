@@ -1,4 +1,4 @@
-"""Document parser adapters — PyMuPDF/Docling for PDF, a stdlib decode for text.
+"""Document parser adapters — PyMuPDF for PDF, a stdlib decode for text.
 
 Plain text and Markdown (:func:`parse_text`) need no parsing library: the
 decoded bytes are themselves the canonical character stream, stored verbatim
@@ -7,25 +7,20 @@ so citations resolve byte-for-byte. PDF needs real extraction, per ADR 0006:
 * **PyMuPDF** is the source of truth for the canonical character
   stream. Every chunk's ``content`` slices the PyMuPDF output by
   ``[char_offset_start:char_offset_end]`` byte-for-byte.
-* **Docling** produces a structured representation (titles,
-  paragraphs, tables) that is stashed for M2 consumption. M1's
-  chunker does not consume Docling's offsets — they are not
-  character-precise against the original PDF.
 
 This module exposes a single high-level entry point :func:`parse_pdf`
-that runs the cascade: PyMuPDF first (mandatory — without it we
-can't produce offsets), Docling second (optional — failures
-degrade gracefully). The returned :class:`ParsedDocument` carries
-the canonical text, page boundaries, and Docling's structured
-output (or ``None`` on Docling failure).
+that runs PyMuPDF against the PDF byte string. The returned
+:class:`ParsedDocument` carries the canonical text and page boundaries.
+``structured_content`` is always ``None`` for PDF; it is reserved for
+the DOCX/Pandoc path (ADR 0017).
 
-Both PyMuPDF and Docling are sync libraries. The orchestrator runs
-them via :func:`asyncio.to_thread` so the worker event-loop is not
-blocked. Imports are deferred until first call so the module
-imports cleanly in environments where the libraries aren't
-installed (e.g. CI runners without the worker dependencies).
+PyMuPDF is a sync library. The orchestrator runs it via
+:func:`asyncio.to_thread` so the worker event-loop is not blocked.
+Imports are deferred until first call so the module imports cleanly in
+environments where the library isn't installed (e.g. CI runners without
+the worker dependencies).
 
-Library versions are pinned via :mod:`api/pyproject.toml`. The
+The library version is pinned via :mod:`api/pyproject.toml`. The
 ``parser_version`` returned by this module records the actually-loaded
 library version at ingest time so re-ingest decisions can be made
 against version drift.
@@ -104,17 +99,13 @@ class ParsedDocument:
         pages: One :class:`PageSpan` per page; ``pages[i].page_number``
             is 1-based.
         page_count: Total page count; equals ``len(pages)``.
-        parser: Which parser cascade produced this result —
-            ``'docling+pymupdf'`` (both succeeded), ``'pymupdf'``
-            (Docling fell through), or ``'pymupdf-only'``
-            (Docling not attempted, e.g., disabled by config).
+        parser: Which parser produced this result — ``'pymupdf-only'``
+            is the only valid value for PDF (ADR 0026).
         parser_version: Library version string of the canonical
-            parser (``fitz.__doc__`` for PyMuPDF, plus Docling
-            version when applicable).
-        structured_content: Docling's structured representation —
-            ``None`` if Docling failed or wasn't attempted. M1 stashes
-            this in ``documents.structured_content`` for M2 consumption;
-            the chunker does not consume it.
+            parser (``fitz.__doc__`` for PyMuPDF).
+        structured_content: Always ``None`` for PDF. Reserved for the
+            DOCX/Pandoc path (ADR 0017), which will be the first parser
+            to populate this field.
     """
 
     canonical_text: str
@@ -253,77 +244,38 @@ def parse_text(raw_bytes: bytes) -> ParsedDocument:
     )
 
 
-def parse_pdf(pdf_bytes: bytes, *, run_docling: bool = True) -> ParsedDocument:
-    """Run the parser cascade on a PDF byte string.
+def parse_pdf(pdf_bytes: bytes) -> ParsedDocument:
+    """Run PyMuPDF against a PDF byte string.
 
-    PyMuPDF is run first and is mandatory — without it we cannot
-    produce the canonical character stream. If PyMuPDF raises, this
-    function re-raises as :class:`ParserError`.
-
-    Docling is run second and is optional; on Docling failure we log
-    a WARNING and proceed with PyMuPDF-only results.
+    PyMuPDF is the only parser — without it we cannot produce the
+    canonical character stream. If PyMuPDF raises, this function
+    re-raises as :class:`ParserError`.
 
     The function is sync so the worker can wrap it via
-    :func:`asyncio.to_thread`. Both libraries are sync internally.
+    :func:`asyncio.to_thread`.
 
     Args:
         pdf_bytes: Raw PDF byte string. Empty input raises
             :class:`ParserError`.
-        run_docling: When False, skip the Docling pass entirely.
-            Useful in tests where Docling is mocked or unavailable.
 
     Returns:
         :class:`ParsedDocument` with the canonical text, page spans,
-        parser metadata, and Docling's structured content if
-        successful.
+        and parser metadata. ``structured_content`` is always ``None``
+        for PDF (reserved for the DOCX/Pandoc path, ADR 0017).
     """
 
     if not pdf_bytes:
         raise ParserError("PDF input is empty")
 
-    # PyMuPDF is the canonical parser — without it, no offsets, no
-    # ingestion. We import it lazily so this module imports cleanly
-    # in environments where it isn't installed (test stubs, etc.).
     canonical_text, pages, pymupdf_version = _run_pymupdf(pdf_bytes)
-
-    # Docling is best-effort. Skip if disabled or unavailable.
-    structured_content: dict[str, object] | None = None
-    docling_version: str | None = None
-    docling_succeeded = False
-
-    if run_docling:
-        try:
-            structured_content, docling_version = _run_docling(pdf_bytes)
-            docling_succeeded = True
-        except Exception as exc:
-            # Docling failures are recoverable — we degrade to
-            # PyMuPDF-only and log so operators see the drift.
-            log.warning(
-                "Docling parser failed; falling back to PyMuPDF-only",
-                extra={
-                    "event": "pipeline_docling_fallback",
-                    "error_type": type(exc).__name__,
-                    "error": str(exc),
-                },
-            )
-
-    if docling_succeeded:
-        parser_label = "docling+pymupdf"
-        version_label = f"pymupdf={pymupdf_version}; docling={docling_version}"
-    elif run_docling:
-        parser_label = "pymupdf"
-        version_label = f"pymupdf={pymupdf_version}; docling=fallback"
-    else:
-        parser_label = "pymupdf-only"
-        version_label = f"pymupdf={pymupdf_version}"
 
     return ParsedDocument(
         canonical_text=canonical_text,
         pages=pages,
         page_count=len(pages),
-        parser=parser_label,
-        parser_version=version_label,
-        structured_content=structured_content,
+        parser="pymupdf-only",
+        parser_version=f"pymupdf={pymupdf_version}",
+        structured_content=None,
     )
 
 
@@ -437,58 +389,3 @@ def _safe_pymupdf_version() -> str:
     except Exception:  # pragma: no cover — defensive
         return "unknown"
 
-
-# ---------------------------------------------------------------------------
-# Docling adapter
-# ---------------------------------------------------------------------------
-
-
-def _run_docling(pdf_bytes: bytes) -> tuple[dict[str, object], str]:
-    """Run Docling against the PDF; return its structured representation.
-
-    Docling's API surface (as of v1.x) accepts an in-memory document
-    via its converter. We use the ``DocumentConverter`` entry point
-    and store the produced document's serialised ``model_dump()`` so
-    M2 readers can deserialise it back into Docling objects.
-
-    Raises:
-        Any exception Docling raises. Caller catches and falls back to
-        PyMuPDF-only.
-    """
-
-    try:
-        from docling.datamodel.base_models import DocumentStream
-        from docling.document_converter import DocumentConverter
-    except ImportError as exc:
-        raise ParserError(
-            "Docling is not installed; document pipeline cannot run Docling pass"
-        ) from exc
-
-    import io
-
-    converter = DocumentConverter()
-    stream = DocumentStream(name="upload.pdf", stream=io.BytesIO(pdf_bytes))
-    result = converter.convert(stream)
-
-    # Newer Docling exposes the result on .document; older on .output.
-    doc = getattr(result, "document", None) or getattr(result, "output", None)
-    if doc is None:
-        raise ParserError("Docling returned no document on conversion result")
-
-    # Serialise via model_dump if Pydantic-backed; otherwise best-effort
-    # (older Docling versions return a custom object — coerce to dict).
-    structured = doc.model_dump() if hasattr(doc, "model_dump") else {"raw": str(doc)}
-
-    version = _safe_docling_version()
-    return structured, version
-
-
-def _safe_docling_version() -> str:
-    """Return Docling's installed version, defensively."""
-
-    try:
-        import docling
-
-        return getattr(docling, "__version__", "unknown")
-    except Exception:  # pragma: no cover — defensive
-        return "unknown"

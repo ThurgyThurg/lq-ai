@@ -27,6 +27,11 @@ updates:
       default-days: 7
     open-pull-requests-limit: 5
     labels: ["dependencies", "api"]
+    ignore:
+      # Docling removed per ADR 0026 (issue #551); prevent Dependabot from
+      # reopening a bump PR (cf. closed #521).
+      - dependency-name: "docling"
+        versions: ["*"]
     groups:
       api-minor-patch:
         applies-to: version-updates

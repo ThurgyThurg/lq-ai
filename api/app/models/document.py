@@ -4,8 +4,8 @@ The C5 document pipeline produces these rows from uploaded PDFs:
 
 * :class:`Document` is the parsed-document metadata — one row per
   successfully ingested file. ``parser`` records which adapter
-  produced the result; ``structured_content`` carries Docling's
-  representation for future M2 consumption.
+  produced the result; ``structured_content`` is reserved for the
+  DOCX/Pandoc path (ADR 0017) and is NULL for all PDF rows.
 * :class:`DocumentChunk` is the load-bearing artifact for the M2
   Citation Engine. ``char_offset_start`` and ``char_offset_end`` are
   byte-precise against the canonical PyMuPDF character stream — the
@@ -51,16 +51,15 @@ from app.db.base import Base
 class Document(Base):
     """Parsed-document metadata for an ingested file.
 
-    ``parser`` is a free-text string (``'docling+pymupdf'``,
-    ``'pymupdf'``, etc.) rather than an enum so future parser additions
-    don't require a migration. ``parser_version`` carries the library
-    version used at ingestion time so re-ingest decisions can be made
-    against version drift.
+    ``parser`` is a free-text string (``'pymupdf-only'`` for PDF) rather
+    than an enum so future parser additions don't require a migration.
+    ``parser_version`` carries the library version used at ingestion time
+    so re-ingest decisions can be made against version drift.
 
-    ``structured_content`` is Docling's structured representation
-    (titles, paragraphs, tables) stashed for M2 consumption. M1's
-    chunker drives off the PyMuPDF character stream and ignores this
-    column.
+    ``structured_content`` is reserved for future DOCX/Pandoc output
+    (ADR 0017). It is always NULL for PDFs ingested after ADR 0026.
+    ``none_as_null=True`` ensures Python ``None`` is stored as SQL NULL
+    rather than the JSON ``'null'`` literal.
     """
 
     __tablename__ = "documents"
@@ -83,6 +82,7 @@ class Document(Base):
     structured_content: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB,
         nullable=True,
+        none_as_null=True,
     )
     # M2-A1: full canonical text from PyMuPDF, the source of truth the
     # Citation Engine slices at chunk offsets when verifying citations.

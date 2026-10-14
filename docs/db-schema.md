@@ -930,7 +930,7 @@ migration `0004_create_documents_and_chunks.py`).
 CREATE TABLE documents (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     file_id             UUID NOT NULL UNIQUE REFERENCES files(id) ON DELETE CASCADE,
-    parser              TEXT NOT NULL,  -- 'docling+pymupdf', 'pymupdf', 'pymupdf-only'
+    parser              TEXT NOT NULL,  -- 'pymupdf-only' (ADR 0026); DOCX/Pandoc will use 'pandoc' (ADR 0017)
     parser_version      TEXT,            -- e.g. 'pymupdf=1.24.0'
     page_count          INTEGER,
     character_count     INTEGER,
@@ -952,13 +952,10 @@ CREATE INDEX idx_documents_ingest_status ON documents(ingest_status)
     WHERE ingest_status IN ('parse_failed','embed_failed','partial');
 ```
 
-Per ADR 0006, the `parser` column carries the cascade outcome:
-`docling+pymupdf` (both succeeded), `pymupdf` (Docling fell through),
-or `pymupdf-only` (Docling intentionally disabled via
-`LQ_AI_DOCLING_ENABLED=false`). **In practice `docling+pymupdf` has never
-occurred** — the Docling pass has never been operational (broken since C5),
-so every row is `pymupdf`; Docling is being removed per ADR 0026, after which
-the value set collapses to PyMuPDF-only.
+Per ADR 0026, the `parser` column is `'pymupdf-only'` for all PDF rows.
+Pre-ADR 0026 rows carry `'pymupdf'` (the Docling pass was broken since C5
+and never produced output; `'docling+pymupdf'` never occurred in practice).
+Future DOCX/Pandoc ingest (ADR 0017) will write `'pandoc'`.
 
 Per M2-A1 (migration 0024), `normalized_content` carries the full,
 canonical PyMuPDF text stream — the source the M2 Citation Engine

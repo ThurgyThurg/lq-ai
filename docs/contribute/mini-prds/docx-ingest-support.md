@@ -10,7 +10,7 @@
 
 Today the ingest pipeline is PDF-only. `api/app/pipeline/ingest.py` gates every upload on `is_pdf_mime` (`api/app/pipeline/parsers.py:134`); anything else is marked `ingestion_status='failed'` with `ingestion_error='unsupported_type'` *before* a parser runs. This mini-PRD proposes a **second parser branch, `parse_docx()`**, that brings `.docx` files into the same `Document` + `DocumentChunk` + Citation-Engine path that PDFs use today — with first-class handling of the features that make Word the format legal teams actually negotiate in: **tracked changes, comments, and footnotes**.
 
-The design deliberately mirrors the existing PDF cascade (ADR 0006): a primary tool produces the canonical character stream that the chunker slices and the Citation Engine re-reads, and a richer structural representation rides alongside in `documents.structured_content`. Concretely:
+The design follows the ADR 0006 pipeline shape: a primary tool produces the canonical character stream that the chunker slices and the Citation Engine re-reads, and a richer structural representation rides alongside in `documents.structured_content`. With the Docling integration removed (ADR 0026), DOCX ingest would be the **first** parser to actually populate `structured_content` — it no longer mirrors an already-populated sidecar. Concretely:
 
 - **Pandoc** (`--track-changes=all`, run once) produces the Markdown the chunker treats as `canonical_text`, and carries insertions/deletions/comments inline as spans we parse out.
 - A small **OOXML pass** (`zipfile` + `lxml`) is a **fallback only** for the comments Pandoc is documented to drop (see "Prior art & the comment question" below). It is not a parallel parser.
@@ -65,7 +65,7 @@ deploy/ + docker-compose*.yml + api/Dockerfile  # pin pandoc in api + ingest-wor
 
 ## Where to start
 
-1. Read [ADR 0006](../../adr/0006-document-pipeline-architecture.md) — it sets the "PyMuPDF canonical + Docling structured" cascade this mirrors, and the offset-fidelity rationale.
+1. Read [ADR 0006](../../adr/0006-document-pipeline-architecture.md) and its Revisions note (ADR 0026 removed Docling) — it sets the PyMuPDF-canonical pipeline shape this mirrors, and the offset-fidelity rationale.
 2. Read `api/app/pipeline/parsers.py` (the `ParsedDocument`/`PageSpan` dataclasses, `is_pdf_mime`, the `parse_pdf` cascade) and `api/app/pipeline/chunker.py` (the invariant the Citation Engine depends on).
 3. Read `api/app/pipeline/ingest.py:155-196` — the exact gate + `asyncio.to_thread(parse_pdf, …)` dispatch `parse_docx` slots beside.
 4. Read `api/app/autonomous/guard.py:588` — the synthetic single-page `ParsedDocument` construction (same shape, the one DE-332 also reuses).
